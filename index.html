@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Pixel Adventure Pro</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #1a1a1a; font-family: 'Courier New', Courier, monospace; }
+        canvas { display: block; image-rendering: pixelated; }
+        #ui { position: absolute; top: 20px; left: 20px; color: #fff; pointer-events: none; text-shadow: 2px 2px #000; }
+        .hint { font-size: 0.8em; color: #aaa; }
+    </style>
+</head>
+<body>
+    <div id="ui">
+        <b>VIDA: <span style="color: #ff4d4d;">♥♥♥</span></b><br>
+        BLOQUES: <span id="inv">0</span><br>
+        <div class="hint">A/D: Caminar | Espacio: Saltar | Click: Minar | Shift: Construir</div>
+    </div>
+    <canvas id="gameCanvas"></canvas>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+// --- AJUSTES DEL MUNDO ---
+const TILE_SIZE = 32;
+const CHUNK_WIDTH = 100;
+const CHUNK_HEIGHT = 50;
+const GRAVITY = 0.45;
+const FRICTION = 0.8;
+
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+// --- GENERADOR DE SPRITE DINÁMICO (Para no necesitar archivos externos) ---
+const spriteSheet = document.createElement('canvas');
+spriteSheet.width = 128; spriteSheet.height = 64;
+const sCtx = spriteSheet.getContext('2d');
+
+function createPixelMan() {
+    sCtx.fillStyle = '#f1c40f'; // Cuerpo/Capa
+    sCtx.fillRect(4, 10, 24, 22);
+    sCtx.fillStyle = '#e0a800'; // Sombra cuerpo
+    sCtx.fillRect(20, 10, 8, 22);
+    sCtx.fillStyle = '#34495e'; // Pantalones
+    sCtx.fillRect(4, 32, 24, 10);
+    sCtx.fillStyle = '#ffdbac'; // Cara
+    sCtx.fillRect(8, 2, 16, 12);
+    sCtx.fillStyle = '#000'; // Ojos
+    sCtx.fillRect(18, 5, 2, 2);
+}
+createPixelMan();
+
+// --- ESTADO DEL JUEGO ---
+let inventory = 0;
+let world = [];
+for(let y=0; y<CHUNK_HEIGHT; y++) {
+    world[y] = [];
+    for(let x=0; x<CHUNK_WIDTH; x++) {
+        let terrain = Math.sin(x * 0.1) * 5 + 15;
+        if (y > terrain + 1) world[y][x] = 3; // Piedra
+        else if (y > terrain) world[y][x] = 2; // Pasto/Tierra
+        else world[y][x] = 0; // Aire
+    }
+}
+
+const player = {
+    x: 500, y: 100,
+    w: 28, h: 42,
+    vx: 0, vy: 0,
+    dir: 1, // 1 derecha, -1 izquierda
+    frame: 0,
+    animTimer: 0,
+    isMoving: false,
+    grounded: false
+};
+
+const camera = { x: 0, y: 0 };
+const keys = {};
+
+window.onkeydown = (e) => keys[e.code] = true;
+window.onkeyup = (e) => keys[e.code] = false;
+
+canvas.onmousedown = (e) => {
+    const worldX = Math.floor((e.clientX + camera.x) / TILE_SIZE);
+    const worldY = Math.floor((e.clientY + camera.y) / TILE_SIZE);
+    
+    if(world[worldY] && world[worldY][worldX] !== undefined) {
+        if(e.shiftKey && inventory > 0) {
+            world[worldY][worldX] = 2;
+            inventory--;
+        } else if(!e.shiftKey && world[worldY][worldX] > 0) {
+            world[worldY][worldX] = 0;
+            inventory++;
+        }
+        document.getElementById('inv').innerText = inventory;
+    }
+};
+
+function update() {
+    // Movimiento
+    player.isMoving = false;
+    if (keys['KeyA'] || keys['ArrowLeft']) {
+        player.vx -= 0.8;
+        player.dir = -1;
+        player.isMoving = true;
+    }
+    if (keys['KeyD'] || keys['ArrowRight']) {
+        player.vx += 0.8;
+        player.dir = 1;
+        player.isMoving = true;
+    }
+    
+    if ((keys['Space'] || keys['ArrowUp']) && player.grounded) {
+        player.vy = -9;
+        player.grounded = false;
+    }
+
+    player.vx *= FRICTION;
+    player.vy += GRAVITY;
+    player.x += player.vx;
+    player.y += player.vy;
+
+    // Colisiones Pro
+    player.grounded = false;
+    let gridX = Math.floor((player.x + player.w/2) / TILE_SIZE);
+    let gridY = Math.floor((player.y + player.h) / TILE_SIZE);
+
+    if (world[gridY] && world[gridY][gridX] > 0) {
+        player.y = gridY * TILE_SIZE - player.h;
+        player.vy = 0;
+        player.grounded = true;
+    }
+
+    // Cámara Suave (Lerp)
+    let targetCamX = player.x - canvas.width / 2;
+    let targetCamY = player.y - canvas.height / 2;
+    camera.x += (targetCamX - camera.x) * 0.1;
+    camera.y += (targetCamY - camera.y) * 0.1;
+
+    // Animación de Sprite
+    if (player.isMoving) {
+        player.animTimer++;
+        if (player.animTimer > 5) {
+            player.frame = (player.frame + 1) % 4;
+            player.animTimer = 0;
+        }
+    } else {
+        player.frame = 0;
+    }
+}
+
+function draw() {
+    // Fondo Skybox
+    let gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+    gradient.addColorStop(0, "#4a90e2");
+    gradient.addColorStop(1, "#87CEEB");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.save();
+    ctx.translate(-camera.x, -camera.y);
+
+    // Dibujar Mundo con Iluminación simple
+    for (let y = 0; y < CHUNK_HEIGHT; y++) {
+        for (let x = 0; x < CHUNK_WIDTH; x++) {
+            let tile = world[y][x];
+            if (tile === 0) continue;
+
+            // Optimización: Solo dibujar lo que se ve en cámara
+            if (x * TILE_SIZE > camera.x - TILE_SIZE && x * TILE_SIZE < camera.x + canvas.width) {
+                
+                let depthColor = y * 3; // Más profundo, más oscuro
+                if (tile === 2) ctx.fillStyle = `hsl(120, 60%, ${40 - depthColor}%)`; // Pasto
+                if (tile === 3) ctx.fillStyle = `hsl(0, 0%, ${50 - depthColor}%)`;   // Piedra
+                
+                ctx.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+                
+                // Bordes de bloques
+                ctx.strokeStyle = "rgba(0,0,0,0.2)";
+                ctx.strokeRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+            }
+        }
+    }
+
+    // Dibujar Jugador Animado
+    ctx.save();
+    ctx.translate(player.x + player.w / 2, player.y + player.h / 2);
+    if (player.dir === -1) ctx.scale(-1, 1);
+    
+    // El "bobbing" (salto leve) al caminar
+    let walkBob = player.isMoving ? Math.sin(Date.now() * 0.01) * 2 : 0;
+    
+    ctx.drawImage(spriteSheet, 0, 0, 32, 64, -player.w/2, -player.h/2 + walkBob, player.w, player.h);
+    ctx.restore();
+
+    ctx.restore();
+}
+
+function loop() {
+    update();
+    draw();
+    requestAnimationFrame(loop);
+}
+
+loop();
+</script>
+</body>
+</html>
